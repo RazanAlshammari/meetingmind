@@ -1,20 +1,28 @@
+import sys
+import os
 import json
 import requests
 
-# 1. نقرأ الترانسكربت
-with open("output/sample_meeting_transcript.json", "r", encoding="utf-8") as f:
-    transcript_data = json.load(f)
+# 1. نقرأ اسم ملف الصوت الأصلي (نفس النمط اللي أسسناه بالسكربتات الثانية)
+audio_path = sys.argv[1] if len(sys.argv) > 1 else "data/jfk.flac"
+base_name = os.path.splitext(os.path.basename(audio_path))[0]
 
-full_text = " ".join(segment["text"] for segment in transcript_data["segments"])
+input_path = f"output/{base_name}_transcript_with_speakers.json"
+output_path = f"output/{base_name}_analysis.json"
 
-print("النص الأصلي:")
+with open(input_path, "r", encoding="utf-8") as f:
+    segments = json.load(f)
+
+# 2. نبني النص مع تسمية المتحدث قبل كل سطر (مو نص عادي متواصل زي قبل)
+full_text = "\n".join(f"{seg['speaker']}: {seg['text']}" for seg in segments)
+
+print("النص مع تسميات المتحدثين:")
 print(full_text)
 print()
 
-# 2. نجهز طلب واحد يغطي كل شي (ملخص + بنود منظمة)
 url = "http://localhost:11434/api/chat"
 
-system_prompt = """You are an assistant that analyzes meeting or speech transcripts.
+system_prompt = """You are an assistant that analyzes meeting or speech transcripts. The transcript includes speaker labels (e.g. SPEAKER_00, SPEAKER_01) before each line.
 Always respond with ONLY valid JSON, with no extra text, no explanations, and no markdown code fences.
 Use exactly this structure:
 
@@ -26,7 +34,7 @@ Use exactly this structure:
   "open_questions": ["..."]
 }
 
-The "summary" field should be 2-3 concise sentences. If a list category has nothing to report, return an empty list for it. Do not invent information that isn't in the transcript."""
+For "person" in action_items, use the speaker label (e.g. "SPEAKER_00") if no real name is mentioned in the transcript itself. The "summary" field should be 2-3 concise sentences. If a list category has nothing to report, return an empty list for it. Do not invent information that isn't in the transcript."""
 
 payload = {
     "model": "qwen2.5:7b",
@@ -37,13 +45,12 @@ payload = {
     "stream": False
 }
 
-# 3. نرسل الطلب (مرة وحدة بس)
+# 3. نرسل الطلب
 response = requests.post(url, json=payload)
 response.raise_for_status()
 
 raw_content = response.json()["message"]["content"].strip()
 
-# 4. كود دفاعي زي قبل
 if raw_content.startswith("```"):
     raw_content = raw_content.strip("`")
     if raw_content.startswith("json"):
@@ -60,8 +67,7 @@ except json.JSONDecodeError as e:
 print("نتيجة التحليل الكاملة:")
 print(json.dumps(analysis, ensure_ascii=False, indent=2))
 
-# 5. نحفظها
-with open("output/sample_meeting_analysis.json", "w", encoding="utf-8") as f:
+with open(output_path, "w", encoding="utf-8") as f:
     json.dump(analysis, f, ensure_ascii=False, indent=2)
 
-print("\nتم حفظ التحليل الكامل بملف: output/sample_meeting_analysis.json")
+print(f"\nتم حفظ التحليل الكامل بملف: {output_path}")
