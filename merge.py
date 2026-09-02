@@ -1,17 +1,27 @@
+import sys
+import os
 import json
 
-# 1. نقرأ الترانسكربت (من Whisper) ونتيجة الديارايزيشن (من pyannote)
-with open("output/jfk_transcript.json", "r", encoding="utf-8") as f:
+# 1. نقرأ اسم ملف الصوت الأصلي (نفس الاسم اللي استخدمناه بـ transcribe.py و diarize.py)
+audio_path = sys.argv[1] if len(sys.argv) > 1 else "data/jfk.flac"
+base_name = os.path.splitext(os.path.basename(audio_path))[0]
+
+transcript_path = f"output/{base_name}_transcript.json"
+diarization_path = f"output/{base_name}_diarization.json"
+output_path = f"output/{base_name}_transcript_with_speakers.json"
+
+# 2. نقرأ الترانسكربت ونتيجة الديارايزيشن
+with open(transcript_path, "r", encoding="utf-8") as f:
     transcript_data = json.load(f)
 
-with open("output/jfk_diarization.json", "r", encoding="utf-8") as f:
+with open(diarization_path, "r", encoding="utf-8") as f:
     diarization_segments = json.load(f)
 
-# 2. دالة تحسب مقدار التداخل الزمني بين مقطعين
+# 3. دالة تحسب مقدار التداخل الزمني بين مقطعين
 def overlap(start1, end1, start2, end2):
     return max(0, min(end1, end2) - max(start1, start2))
 
-# 3. لكل مقطع نص (من Whisper)، نلاقي المتحدث صاحب أكبر تداخل زمني معه
+# 4. لكل مقطع نص، نلاقي المتحدث صاحب أكبر تداخل زمني
 merged_segments = []
 for segment in transcript_data["segments"]:
     best_speaker = None
@@ -30,11 +40,11 @@ for segment in transcript_data["segments"]:
         "text": segment["text"]
     })
 
-# 4. نطبع ونحفظ النتيجة النهائية المدمجة
+# 5. نطبع ونحفظ النتيجة النهائية المدمجة
 for seg in merged_segments:
     print(f"[{seg['start']:.2f}s -> {seg['end']:.2f}s] {seg['speaker']}: {seg['text']}")
 
-with open("output/jfk_transcript_with_speakers.json", "w", encoding="utf-8") as f:
+with open(output_path, "w", encoding="utf-8") as f:
     json.dump(merged_segments, f, ensure_ascii=False, indent=2)
 
-print("\nتم حفظ الترانسكربت المدمج بملف: output/jfk_transcript_with_speakers.json")
+print(f"\nتم حفظ الترانسكربت المدمج بملف: {output_path}")
