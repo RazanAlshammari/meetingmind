@@ -4,6 +4,7 @@ import soundfile as sf
 import torch
 from dotenv import load_dotenv
 from pyannote.audio import Pipeline
+import json
 
 # 1. نحمّل المتغيرات من .env (يشمل HUGGINGFACE_TOKEN)
 load_dotenv()
@@ -31,5 +32,17 @@ waveform = torch.from_numpy(audio_array).float()
 diarization = pipeline({"waveform": waveform, "sample_rate": sample_rate})
 
 # 4. نطبع النتيجة: كل مقطع، وين بدأ ووين خلص، ومين المتحدث
+
+speaker_segments = []
 for turn, speaker in diarization.speaker_diarization:
     print(f"[{turn.start:.2f}s -> {turn.end:.2f}s] {speaker}")
+    speaker_segments.append({
+        "start": turn.start,
+        "end": turn.end,
+        "speaker": speaker
+    })
+
+with open("output/jfk_diarization.json", "w", encoding="utf-8") as f:
+    json.dump(speaker_segments, f, ensure_ascii=False, indent=2)
+
+print("\nتم حفظ نتيجة الديارايزيشن بملف: output/jfk_diarization.json")
