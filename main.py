@@ -1,6 +1,10 @@
 import uuid
 import os
 from fastapi import FastAPI, UploadFile, File, HTTPException
+import subprocess
+import sys
+import json
+from fastapi import BackgroundTasks
 
 app = FastAPI()
 
@@ -37,3 +41,34 @@ def get_meeting(meeting_id: str):
     if meeting_id not in meetings_db:
         raise HTTPException(status_code=404, detail="Meeting not found")
     return meetings_db[meeting_id]
+
+
+def run_pipeline(meeting_id: str, audio_path: str):
+    meetings_db[meeting_id]["status"] = "processing"
+    try:
+        subprocess.run([sys.executable, "transcribe.py", audio_path], check=True)
+        subprocess.run([sys.executable, "diarize.py", audio_path], check=True)
+        subprocess.run([sys.executable, "merge.py", audio_path], check=True)
+        subprocess.run([sys.executable, "analyze.py", audio_path], check=True)
+
+        base_name = os.path.splitext(os.path.basename(audio_path))[0]
+        result_path = f"output/{base_name}_analysis.json"
+        with open(result_path, "r", encoding="utf-8") as f:
+            analysis = json.load(f)
+
+        meetings_db[meeting_id]["status"] = "done"
+        meetings_db[meeting_id]["result"] = analysis
+    except subprocess.CalledProcessError as e:
+        meetings_db[meeting_id]["status"] = "failed"
+        meetings_db[meeting_id]["error"] = str(e)
+
+@app.post("/meetings/{meeting_id}/analyze")
+def analyze_meeting(meeting_id: str, background_tasks: BackgroundTasks):
+    if meeting_id not in meetings_db:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+
+    audio_path = meetings_db[meeting_id]["file_path"]
+    meetings_db[meeting_id]["status"] = "queued"
+    background_tasks.add_task(run_pipeline, meeting_id, audio_path)
+
+    return {"meeting_id": meeting_id, "status": "queued"}
