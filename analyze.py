@@ -40,9 +40,10 @@ payload = {
     "model": "qwen2.5:7b",
     "messages": [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"Analyze this transcript:\n\n{full_text}"}
+        {"role": "user", "content": f"Analyze this transcript:\n\n{full_text}\n\nRespond with ONLY a valid JSON object using exactly this structure (no other keys):\n{{\n  \"summary\": \"...\",\n  \"decisions\": [\"...\"],\n  \"action_items\": [{{\"person\": \"...\", \"task\": \"...\", \"deadline\": \"...\"}}],\n  \"deadlines\": [\"...\"],\n  \"open_questions\": [\"...\"]\n}}"}
     ],
-    "stream": False
+    "stream": False,
+    "format": "json"
 }
 
 # 3. نرسل الطلب

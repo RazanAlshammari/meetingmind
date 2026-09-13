@@ -90,10 +90,14 @@ def analyze_meeting(meeting_id: str, background_tasks: BackgroundTasks):
     return {"meeting_id": meeting_id, "status": "queued"}
 
 @app.post("/ask")
-def ask_question(question: str):
+def ask_question(question: str, meeting_id: str = None):
     question_embedding = embedding_model.encode([question]).tolist()
-    results = chroma_collection.query(query_embeddings=question_embedding, n_results=3)
 
+    query_kwargs = {"query_embeddings": question_embedding, "n_results": 3}
+    if meeting_id:
+        query_kwargs["where"] = {"meeting": meeting_id}
+
+    results = chroma_collection.query(**query_kwargs)
     context_parts = []
     for doc, meta in zip(results["documents"][0], results["metadatas"][0]):
         context_parts.append(
