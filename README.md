@@ -1,157 +1,107 @@
-# MeetingMind — Privacy-First AI Meeting Intelligence
+# MeetingMind
 
-MeetingMind processes meeting recordings **entirely on your own machine** —
-no audio, transcript, or meeting content is ever sent to an external API
-(no OpenAI, no Gemini, no Claude API). It transcribes the meeting, identifies
-who spoke, and extracts a summary, decisions, action items, deadlines, and
-open questions — all using local AI models.
+A privacy-first AI meeting intelligence system that runs entirely on local hardware — no audio, transcripts, or meeting content ever leave your machine. Built as a portfolio project to demonstrate a full local AI pipeline: speech-to-text, speaker diarization, structured LLM extraction, and retrieval-augmented generation (RAG) over meeting history.
 
-This is a portfolio AI Engineering project built incrementally, one phase
-at a time, with each stage tested on real audio before moving to the next.
+## Why local-only
+
+Meeting recordings are sensitive. MeetingMind is built around a simple constraint: every model — speech-to-text, diarization, the LLM, and the embedding model used for search — runs on your machine via [Ollama](https://ollama.com) and local Python libraries. Nothing is uploaded to a third-party API. This shapes every technical decision in the project, including which models were chosen (small enough to run acceptably on a CPU-only laptop) and how the API server is configured (binds to `127.0.0.1` by default).
 
 ## What it does
 
-Given an audio/video file of a meeting, MeetingMind runs it through a local
-pipeline:
+**V1 — Meeting Intelligence.** Upload a recording of a meeting; MeetingMind transcribes it, identifies who spoke when, and extracts a structured summary: key decisions, action items (with owner and deadline where mentioned), deadlines, and open questions.
+
+**V2 — Ask Your Meetings.** Once a meeting is processed, ask natural-language questions about it (or across all processed meetings) and get an answer with citations — which meeting, which speaker, and the exact timestamp the answer came from. If the answer isn't in your meetings, it says so instead of guessing.
+
+## Pipeline
 
 ```
-Audio/Video
-    -> Speech-to-Text (faster-whisper)
-    -> Speaker Diarization (pyannote.audio)
-    -> Transcript + Speaker merge
-    -> Local LLM extraction (Ollama + Qwen2.5-7B)
-    -> Summary, Decisions, Action Items, Deadlines, Open Questions
+Audio/Video file
+      │
+      ▼
+faster-whisper (speech-to-text)
+      │
+      ▼
+pyannote.audio (speaker diarization)
+      │
+      ▼
+custom merge (aligns transcript with speaker turns)
+      │
+      ▼
+Qwen2.5-7B via Ollama (structured extraction: summary, decisions,
+                        action items, deadlines, open questions)
+      │
+      ▼
+chunking (one chunk per speaker turn) → all-MiniLM-L6-v2 embeddings
+      │
+      ▼
+Chroma (local vector database)
+      │
+      ▼
+POST /ask → embed question → retrieve top-3 relevant chunks →
+            Qwen2.5-7B answers with citations
 ```
-
-Speakers are identified as anonymous labels (`SPEAKER_00`, `SPEAKER_01`, ...),
-not real names — this is a deliberate scope decision, not a limitation of
-the pipeline (see "Known limitations" below).
 
 ## Tech stack
 
-- **Speech-to-Text**: faster-whisper (CTranslate2-based Whisper), CPU inference
-- **Speaker Diarization**: pyannote.audio 4.x (`speaker-diarization-3.1`)
-- **Local LLM**: Qwen2.5-7B-Instruct, served via Ollama
-- **API**: FastAPI + uvicorn
-- **Runs fully on CPU** — no GPU required (tested on an Intel i7 laptop, 16GB RAM)
+| Layer | Choice |
+|---|---|
+| API | FastAPI + uvicorn, async background jobs |
+| Speech-to-text | faster-whisper (small/medium, int8) |
+| Speaker diarization | pyannote.audio 4.0.7 |
+| Local LLM | Qwen2.5-7B-Instruct via Ollama |
+| Embeddings | sentence-transformers `all-MiniLM-L6-v2` |
+| Vector search | Chroma (persistent, local) |
 
-## Prerequisites
+## API
 
-- Python 3.12+
-- Ollama installed (https://ollama.com), with the model pulled:
-```
-  ollama pull qwen2.5:7b
-```
-- A Hugging Face account with a **read-only** access token, and access
-  accepted on the gated pyannote model pages:
-  - `pyannote/speaker-diarization-3.1`
-  - `pyannote/segmentation-3.0`
-  - `pyannote/speaker-diarization-community-1`
+- `POST /meetings` — upload an audio/video file (`.mp3`, `.wav`, `.flac`, `.m4a`, `.mp4`)
+- `POST /meetings/{id}/analyze` — run the full pipeline on an uploaded meeting
+- `GET /meetings/{id}` — check status (`uploaded` → `queued` → `processing` → `done`/`failed`) and get results
+- `POST /ask` — ask a question, optionally scoped to one meeting via `meeting_id`, or across all processed meetings if omitted
 
-## Setup
+Full interactive docs at `/docs` once the server is running.
 
-1. Clone the repo and create a virtual environment:
-```
-   python -m venv venv
-   venv\Scripts\activate
-   pip install -r requirements.txt
-```
-2. Create a `.env` file in the project root with your Hugging Face token:
-```
-   HUGGINGFACE_TOKEN=your_token_here
-```
-3. Make sure Ollama is running in the background (it usually starts
-   automatically after installation).
+## Running it locally
 
-## Running the API
-
+```bash
+git clone https://github.com/RazanAlshammari/meetingmind.git
+cd meetingmind
+python -m venv venv
+venv\Scripts\activate        # Windows
+pip install -r requirements.txt
 ```
+
+You'll also need [Ollama](https://ollama.com) installed and running, with the model pulled:
+```bash
+ollama pull qwen2.5:7b
+```
+
+Then start the API:
+```bash
 uvicorn main:app --reload
 ```
 
-The API is available at `http://127.0.0.1:8000`. Interactive docs
-(Swagger UI) are at `http://127.0.0.1:8000/docs`.
+Visit `http://127.0.0.1:8000/docs` to try it.
 
-## API usage
+## Running it in Docker
 
-### 1. Upload a meeting recording
+A `Dockerfile` is included that containerizes the API service (code + Python dependencies). It's written to connect to Ollama running on the host machine via `host.docker.internal`, rather than containerizing the full local AI stack (Ollama's own container setup and large model downloads add real complexity without changing what the project demonstrates).
 
-```
-POST /meetings
-```
+**Honest note:** this `Dockerfile` has been written and reviewed but not build-tested end-to-end — the development machine used for this project has CPU virtualization disabled in BIOS, which Docker Desktop requires. The Dockerfile follows standard, well-established patterns (slim Python base image, dependency layer caching, exposed port, `uvicorn` entrypoint) and is expected to build correctly on a machine with virtualization enabled; it just hasn't been verified with an actual `docker build` run in this environment yet.
 
-Accepts a file upload (`.mp3`, `.wav`, `.flac`, `.m4a`, `.mp4` — anything
-else is rejected with a 400 error). Returns a `meeting_id`:
+## Evaluated on real meetings
 
-```json
-{
-  "meeting_id": "4402bf90-5298-4e61-85e9-1978e07ba274",
-  "original_filename": "meeting.wav",
-  "file_path": "uploads\\4402bf90-5298-4e61-85e9-1978e07ba274.wav",
-  "status": "uploaded"
-}
-```
+Beyond hand-written test clips, the full pipeline (V1 analysis + V2 chunking/embedding/retrieval) was run end-to-end on two real recordings from the [AMI Meeting Corpus](https://groups.inf.ed.ac.uk/ami/corpus/) — unscripted, multi-speaker, 19–21 minute product-design meetings. Both produced correctly structured analysis and answered follow-up questions with accurate citations, including one case where the system correctly declined to overclaim ("the transcript mentions d-pads and buttons, not an explicit joystick") rather than guessing.
 
-### 2. Trigger analysis
+## Known limitations
 
-```
-POST /meetings/{meeting_id}/analyze
-```
+Documented honestly rather than glossed over — these are real trade-offs made along the way, not oversights discovered later:
 
-Starts the full pipeline (transcription, diarization, merging, LLM
-extraction) as a background job and returns immediately:
-
-```json
-{ "meeting_id": "4402bf90-...", "status": "queued" }
-```
-
-Processing time depends on audio length — expect roughly 1-3 minutes for a
-short (~1 minute) clip on CPU.
-
-### 3. Check status / get the result
-
-```
-GET /meetings/{meeting_id}
-```
-
-Poll this endpoint until `status` is `"done"` (or `"failed"`):
-
-```json
-{
-  "meeting_id": "4402bf90-...",
-  "status": "done",
-  "result": {
-    "summary": "...",
-    "decisions": ["..."],
-    "action_items": [
-      { "person": "SPEAKER_01", "task": "...", "deadline": "..." }
-    ],
-    "deadlines": ["..."],
-    "open_questions": ["..."]
-  }
-}
-```
-
-## Known limitations (honest, current status)
-
-- Meeting records are stored **in memory only** — restarting the server
-  clears all meeting history and results.
-- No protection against re-triggering analysis on an already-processed
-  meeting (it simply re-runs and overwrites the previous result).
-- Diarization has only been validated on a clean two-speaker recording with
-  no overlapping speech — not yet tested against messy, realistic
-  multi-speaker conversation (planned: evaluation against the AMI Meeting
-  Corpus).
-- The local LLM occasionally produces internally inconsistent output
-  between runs on identical input (a known, observed characteristic of
-  local LLM sampling, not a code bug) — structured fields are more
-  reliable than free-text summary prose.
-- No authentication or multi-user support — this is a single-user local
-  tool, not a hosted multi-tenant service.
+- **In-memory meeting registry.** Meeting metadata and status live in memory and reset on server restart; the vector database (Chroma) is already persistent, and moving meeting metadata alongside it is a natural next step.
+- **No concurrency guard on `/analyze`.** Triggering analysis twice for the same meeting in quick succession causes a race condition (observed and reproduced during testing). Low-probability in normal use; not yet hardened against.
+- **Chunking has no size cap.** Chunks are one per speaker turn, which keeps attribution clean but means a very long uninterrupted turn could exceed the embedding model's ~256-token window during vector search (the full text is still stored and still reaches the LLM once retrieved — this affects search ranking quality, not data loss). Not yet observed to be a problem on real meetings tested so far.
+- **Chroma + long-running server processes.** If chunks are added to the vector database by a separate process while the API server is already running, the server's connection can go stale until restarted. Understood and documented; not yet auto-recovered.
 
 ## Roadmap
 
-- [x] V1: local pipeline (transcription, diarization, structured extraction) + REST API
-- [ ] V2: "Ask Your Meetings" — RAG-based Q&A across multiple meetings, with evidence and timestamps
-- [ ] Docker packaging
-- [ ] Arabic language support (V3), then mixed Arabic/English (V4)
+V3 will add Arabic support; V4, mixed Arabic/English meetings. Both are future work, not started.
